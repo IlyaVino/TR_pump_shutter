@@ -6,6 +6,12 @@
   three states for shutter operation.  Three states are open, 
   closed, and acquire. Last state's shutter operation is via
   external trigger.
+
+  To do:
+  1) Add trigger code from mode 2 (triggerd shutter operation)
+  2) Clean up code in loop and move to functions
+  3) Reduce number of global variables
+  4) fix variable names to be more clear
 */
 
 #include <Servo.h>
@@ -18,16 +24,18 @@ int servoPin = 6; //servo pin
 // "true" once structure is filled with actual data for the first time.
 typedef struct {
   boolean valid;
-  int pos_upper;
-  int pos_lower;
+  int u;
+  int l;
 } motor_pos;
 motor_pos flash_motor_pos;  //reserve portion of memory for copying flash  memory
 FlashStorage(my_flash_store, motor_pos);  //reserve portion of flash memory for motor positions
-int pos_upper = 60;    // variable to store the upper servo position
-int pos_lower = 30;   // variable to store the lower servo position
+int u = 60;    // variable to store the upper servo position
+int l = 30;   // variable to store the lower servo position
 
-int buttonStatus = 0;    // digital sensor
+//button is used to switch between shutter open/closed state (mode = 1 or 0)
+
 int buttonPin = 5;       // digital sensor pin
+int shutterMode = 0;  //keeps track of button mode. 0 = closed, 1 = open, 2 = trigger
 
 char serialBuffer[10];  // serial command buffer of 10 characters
 int inByte = 0; // byte output from serial port
@@ -42,11 +50,11 @@ void setup() {
   flash_motor_pos = my_flash_store.read();
   // if this is the first read then valid should be false
   if (flash_motor_pos.valid==true) {
-    pos_upper = flash_motor_pos.pos_upper;
-    pos_lower = flash_motor_pos.pos_lower;
+    u = flash_motor_pos.u;
+    l = flash_motor_pos.l;
   }
 
-  myservo.write(pos_lower);
+  myservo.write(l); //attach pin takes some time, this avoids switching while writing
   myservo.attach(servoPin);  // attaches the servo on pin 6 to the servo object
   
   // start serial port at 9600 bps and wait for port to open:
@@ -76,6 +84,46 @@ int getAngle(char angle_str[], int *angle) {
   }
   
   return angleOK;
+}
+
+// remove button bounce artifact by checking button status 4 consecutive times
+// returns button status. -1 is flag for unknown status
+int buttonDebounce()  {
+  #define DEBUND_BITS 0b111111  //register length for button off
+  static unsigned int b = 0;  // register to keep track of true button state in case button press has ringing
+  
+  // this updates button status into button register (used to avoid ringing error)
+  b = b << 1; //shift button register to left
+  b = (b & ~1) | digitalRead(buttonPin); //clear first register and populate with button status
+  
+  if ((b & DEBUND_BITS) == DEBUND_BITS) { //if button is HIGH register length times in a row
+    return 1;  
+  }
+  if ((b & DEBUND_BITS) == 0) { //if button is LOW register length times in a row
+    return 0;
+  }
+  return -1;  //happens when register is mixed HIGH and LOW
+}
+
+// switches mode for shutter opperation upon button press and keeps track of old button status
+void buttonPressSwitchState()  {
+  static int bOldState = 1;
+  int bNewState = buttonDebounce();
+  if (bNewState != -1) {
+    if ((bNewState == 0) && (bOldState == 1)) {
+      switch (shutterMode)  {
+        case 0:
+          shutterMode = 1;
+          break;
+        case 1:
+          shutterMode = 0;
+          break;
+      }
+    }
+    
+    bOldState = bNewState;
+  }
+
 }
 
 // loops through this code under normal operation
@@ -109,25 +157,55 @@ void loop() {
       case 's':
         switch (serialBuffer[1])  {
           case 'l': //set lower servo angle
-            getAngle(&serialBuffer[2], &pos_lower);
+            getAngle(&serialBuffer[2], &l);
             break;
             
           case 'u': //set upper servo angle
-            getAngle(&serialBuffer[2], &pos_upper);
+            getAngle(&serialBuffer[2], &u);
+            break;
+        }
+        break;
+
+      //set mode of operation
+      case 'm': 
+        switch (serialBuffer[1])  {
+          case '0': //shutter closed
+            shutterMode = 0;
+            break;
+          case '1': //shutter open
+            shutterMode = 1;
+            break;
+          case '2': //shutter triggered operation
+            shutterMode = 2;
+            break;
+          default:
+            Serial.println("Invalid mode command");  
         }
         break;
         
-//      case 'm':
-//
-//      case 'r':
+      case 'r': //read to serial port current state:
+        switch (serialBuffer[1])  {
+          case 'm': //read mode
+            Serial.println(shutterMode); 
+            break;
+          case 'l': //read lower angle
+            Serial.println(l); 
+            break;
+          case 'u': //read upper angle
+            Serial.println(u); 
+            break;
+          default:
+            Serial.println("Invalid read command");
+        }
+        break;
 
       case 'f': // read/write servo angles to flash
         switch (serialBuffer[1]) {
           case 'w': //write to flash
             //update values in struct that will be sent to flash
             flash_motor_pos.valid = true; //flag that flash has been written to
-            flash_motor_pos.pos_upper = pos_upper;
-            flash_motor_pos.pos_lower = pos_lower;
+            flash_motor_pos.u = u;
+            flash_motor_pos.l = l;
 
             //write struct to flash
             my_flash_store.write(flash_motor_pos);
@@ -138,8 +216,8 @@ void loop() {
             flash_motor_pos = my_flash_store.read();
             // if this is the first read then valid should be false and there is nothing to read
             if (flash_motor_pos.valid==true) {
-              pos_upper = flash_motor_pos.pos_upper;
-              pos_lower = flash_motor_pos.pos_lower;
+              u = flash_motor_pos.u;
+              l = flash_motor_pos.l;
             }
             break;
             
@@ -156,15 +234,19 @@ void loop() {
     serialIndex = 0; // reset serial buffer
     readSerialBuffer = false;  
   }
+
+  buttonPressSwitchState(); //if button is pressed undergo state swich if state is 0 or 1
   
-  buttonStatus = digitalRead(buttonPin);
-
   // Third manage state of Arduino and shutter operation
-  if (buttonStatus==1) {
-    myservo.write(pos_lower);
-    
-  } else {
-    myservo.write(pos_upper);
+  switch (shutterMode)  {
+    case 0:
+      myservo.write(l);
+      break;
+    case 1:
+      myservo.write(u);
+      break;
+    //case 2:
+    //;
+      //put trigger code here
   }
-
 }
