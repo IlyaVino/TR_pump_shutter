@@ -24,13 +24,13 @@ int servoPin = 6; //servo pin
 // "true" once structure is filled with actual data for the first time.
 typedef struct {
   boolean valid;
-  int u;
-  int l;
+  int closed;
+  int opened;
 } motor_pos;
 motor_pos flash_motor_pos;  //reserve portion of memory for copying flash  memory
 FlashStorage(my_flash_store, motor_pos);  //reserve portion of flash memory for motor positions
-int u = 60;    // variable to store the upper servo position
-int l = 30;   // variable to store the lower servo position
+int shutterOpened = 60;    // variable to store the upper servo position
+int shutterClosed = 30;   // variable to store the lower servo position
 
 //button is used to switch between shutter open/closed state (mode = 1 or 0)
 
@@ -50,11 +50,11 @@ void setup() {
   flash_motor_pos = my_flash_store.read();
   // if this is the first read then valid should be false
   if (flash_motor_pos.valid==true) {
-    u = flash_motor_pos.u;
-    l = flash_motor_pos.l;
+    shutterOpened = flash_motor_pos.opened;
+    shutterClosed = flash_motor_pos.closed;
   }
 
-  myservo.write(l); //attach pin takes some time, this avoids switching while writing
+  myservo.write(shutterClosed); //attach pin takes some time, this avoids switching while writing
   myservo.attach(servoPin);  // attaches the servo on pin 6 to the servo object
   
   // start serial port at 9600 bps and wait for port to open:
@@ -157,12 +157,13 @@ void loop() {
       case 's':
         switch (serialBuffer[1])  {
           case 'l': //set lower servo angle
-            getAngle(&serialBuffer[2], &l);
+            getAngle(&serialBuffer[2], &shutterClosed);
             break;
-            
           case 'u': //set upper servo angle
-            getAngle(&serialBuffer[2], &u);
+            getAngle(&serialBuffer[2], &shutterOpened);
             break;
+          default:
+            Serial.println("Invalid set command");   
         }
         break;
 
@@ -189,10 +190,10 @@ void loop() {
             Serial.println(shutterMode); 
             break;
           case 'l': //read lower angle
-            Serial.println(l); 
+            Serial.println(shutterClosed); 
             break;
           case 'u': //read upper angle
-            Serial.println(u); 
+            Serial.println(shutterOpened); 
             break;
           default:
             Serial.println("Invalid read command");
@@ -204,8 +205,8 @@ void loop() {
           case 'w': //write to flash
             //update values in struct that will be sent to flash
             flash_motor_pos.valid = true; //flag that flash has been written to
-            flash_motor_pos.u = u;
-            flash_motor_pos.l = l;
+            flash_motor_pos.opened = shutterOpened;
+            flash_motor_pos.closed = shutterClosed;
 
             //write struct to flash
             my_flash_store.write(flash_motor_pos);
@@ -216,8 +217,8 @@ void loop() {
             flash_motor_pos = my_flash_store.read();
             // if this is the first read then valid should be false and there is nothing to read
             if (flash_motor_pos.valid==true) {
-              u = flash_motor_pos.u;
-              l = flash_motor_pos.l;
+              shutterOpened = flash_motor_pos.opened;
+              shutterClosed = flash_motor_pos.closed;
             }
             break;
             
@@ -240,10 +241,10 @@ void loop() {
   // Third manage state of Arduino and shutter operation
   switch (shutterMode)  {
     case 0:
-      myservo.write(l);
+      myservo.write(shutterClosed);
       break;
     case 1:
-      myservo.write(u);
+      myservo.write(shutterOpened);
       break;
     //case 2:
     //;
