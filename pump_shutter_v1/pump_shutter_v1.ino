@@ -6,8 +6,6 @@
   three states for shutter operation.  Three states are open, 
   closed, and acquire. Last state's shutter operation is via
   external trigger.
-  
-  test change
 
   To do:
   1) Add trigger code from mode 2 (triggerd shutter operation)
