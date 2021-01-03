@@ -6,8 +6,6 @@
   three states for shutter operation.  Three states are open, 
   closed, and acquire. Last state's shutter operation is via
   external trigger.
-  
-  test change
 
   To do:
   1) Add trigger code from mode 2 (triggerd shutter operation)
@@ -18,6 +16,8 @@
 
 #include <Servo.h>
 #include <FlashStorage.h>
+#include <Wire.h>
+#define ADDR 0x50 //default EEPROM address when A0-A2 pins wired to ground
 
 Servo myservo;  // create servo object to control a servo
 int servoPin = 6; //servo pin
@@ -196,6 +196,52 @@ int getAngle(char angle_str[], int *angle) {
   }
   
   return angleOK;
+}
+
+//write by page to EEPROM
+void writeI2CByte(byte data_addr, void* data, int dataSize){
+  //Wire.begin();
+  #define PAGE_SIZE 16
+  int bytesToSend;
+  int addressToSend = 0;
+  char * c = (char *) data;
+  for (; dataSize  > 0 ;) {
+    Wire.beginTransmission(ADDR);
+    Wire.write(data_addr + addressToSend);
+    bytesToSend = min(PAGE_SIZE,dataSize);
+    Wire.write(&c[addressToSend],bytesToSend);
+    dataSize -= bytesToSend;
+    addressToSend += bytesToSend;
+    Wire.endTransmission();
+    delay(10);
+  }
+}
+
+//read by byte from EEPROM
+bool readI2CByte(byte data_addr, void* data, int dataSize){
+  
+  char *c = (char *)data;
+  int bytesOut = 0;
+  int ii = 0;
+  //Wire.begin();
+  Wire.beginTransmission(ADDR);
+  Wire.write(data_addr);
+  Wire.endTransmission();
+  bytesOut = Wire.requestFrom(ADDR, dataSize); //retrieve returned bytes
+  Serial.println(bytesOut);
+  Serial.println(dataSize);
+  delay(1);
+  while(Wire.available()){
+    c[ii] = Wire.read();
+    Serial.print(( int )c[ii]);
+    Serial.print(" ");
+    ii++;
+    if (ii>dataSize)  return false;
+  }
+  Serial.println();
+  Serial.println(ii);
+  if (ii==dataSize) return true;
+  return false;
 }
 
 // remove button bounce artifact by checking button status 4 consecutive times
