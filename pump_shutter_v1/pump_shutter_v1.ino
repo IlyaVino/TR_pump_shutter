@@ -9,15 +9,12 @@
 
   To do:
   1) Add trigger code from mode 2 (triggerd shutter operation)
-  2) Clean up code in loop and move to functions
-  3) Reduce number of global variables
-  4) fix variable names to be more clear
 */
 
 #include <Servo.h>
-#include <FlashStorage.h>
 #include <Wire.h>
 #define ADDR 0x50 //default EEPROM address when A0-A2 pins wired to ground
+#define CSUM_CONST 42  //constant for checksum for motor positions stored to EEPROM
 
 Servo myservo;  // create servo object to control a servo
 int servoPin = 6; //servo pin
@@ -25,33 +22,36 @@ int servoPin = 6; //servo pin
 // Create a structure for servo motor positions. "valid" variable is set to 
 // "true" once structure is filled with actual data for the first time.
 typedef struct {
-  boolean valid;
   int closed;
   int opened;
+  unsigned int csum;
 } motor_pos;
-motor_pos flash_motor_pos;  //reserve portion of memory for copying flash  memory
-FlashStorage(my_flash_store, motor_pos);  //reserve portion of flash memory for motor positions
+motor_pos readwrite_motor_pos;  //reserve portion of memory for copying flash  memory
 
 int shutterOpened = 60;    // variable to store the upper servo position
 int shutterClosed = 30;   // variable to store the lower servo position
 
 //button is used to switch between shutter open/closed state (mode = 1 or 0)
-
 int buttonPin = 5;       // digital sensor pin
 int shutterMode = 0;  //keeps track of button mode. 0 = closed, 1 = open, 2 = trigger
 
 char serialBuffer[10];  // serial command buffer of 10 characters
 
+//run this code initially
 void setup() {
 
   pinMode(buttonPin, INPUT_PULLUP); // sets buttonPin to input with pull up (off = HI)
+
+  //Start I2C for reading/write motor positions to EEPROM
+  Wire.begin();
+  delay(10);
   
   // reads flash memory for motor positions
-  flash_motor_pos = my_flash_store.read();
-  // if this is the first read then valid should be false
-  if (flash_motor_pos.valid==true) {
-    shutterOpened = flash_motor_pos.opened;
-    shutterClosed = flash_motor_pos.closed;
+  readI2CByte(0, &readwrite_motor_pos, sizeof(readwrite_motor_pos));
+  // if stored data is valid update shutter closed and opened positions
+  if (motorIsDataValid(readwrite_motor_pos)==true) {
+    shutterOpened = readwrite_motor_pos.opened;
+    shutterClosed = readwrite_motor_pos.closed;
   }
 
   myservo.write(shutterClosed); //attach pin takes some time, this avoids switching while writing
@@ -61,6 +61,10 @@ void setup() {
   Serial.begin(9600);
   //while (!Serial) {  } //removed because if serial connection is not established shutter will not work
   
+}
+
+bool motorIsDataValid(motor_pos pos_to_check) {
+  return (pos_to_check.closed + pos_to_check.opened + CSUM_CONST)==pos_to_check.csum;
 }
 
 // Handle serial input and storing into buffer with new line (\n) as read flag
@@ -147,21 +151,23 @@ void interpSerialBuffer() {
       switch (serialBuffer[1]) {
         case 'w': //write to flash
           //update values in struct that will be sent to flash
-          flash_motor_pos.valid = true; //flag that flash has been written to
-          flash_motor_pos.opened = shutterOpened;
-          flash_motor_pos.closed = shutterClosed;
+          readwrite_motor_pos.opened = shutterOpened;
+          readwrite_motor_pos.closed = shutterClosed;
+          //basic checksum to ensure that the opened/closed positions are valid
+          readwrite_motor_pos.csum = readwrite_motor_pos.closed + readwrite_motor_pos.opened + CSUM_CONST;
   
           //write struct to flash
-          my_flash_store.write(flash_motor_pos);
+          writeI2CByte(0, &readwrite_motor_pos, sizeof(readwrite_motor_pos));
           break;
           
         case 'r': //read to flash
           // reads flash memory for motor positions
-          flash_motor_pos = my_flash_store.read();
-          // if this is the first read then valid should be false and there is nothing to read
-          if (flash_motor_pos.valid==true) {
-            shutterOpened = flash_motor_pos.opened;
-            shutterClosed = flash_motor_pos.closed;
+          // reads flash memory for motor positions
+          readI2CByte(0, &readwrite_motor_pos, sizeof(readwrite_motor_pos));
+          // if stored data is valid update shutter closed and opened positions
+          if (motorIsDataValid(readwrite_motor_pos)==true) {
+            shutterOpened = readwrite_motor_pos.opened;
+            shutterClosed = readwrite_motor_pos.closed;
           }
           break;
           
@@ -228,18 +234,18 @@ bool readI2CByte(byte data_addr, void* data, int dataSize){
   Wire.write(data_addr);
   Wire.endTransmission();
   bytesOut = Wire.requestFrom(ADDR, dataSize); //retrieve returned bytes
-  Serial.println(bytesOut);
-  Serial.println(dataSize);
+  //Serial.println(bytesOut);
+  //Serial.println(dataSize);
   delay(1);
   while(Wire.available()){
     c[ii] = Wire.read();
-    Serial.print(( int )c[ii]);
-    Serial.print(" ");
+    //Serial.print(( int )c[ii]);
+    //Serial.print(" ");
     ii++;
     if (ii>dataSize)  return false;
   }
-  Serial.println();
-  Serial.println(ii);
+  //Serial.println();
+  //Serial.println(ii);
   if (ii==dataSize) return true;
   return false;
 }
