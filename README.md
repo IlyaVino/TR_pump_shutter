@@ -12,11 +12,11 @@ The open/closed mode of operations are as described: shutter open or shutter clo
 
 The button press mode of operation works when the shutter is in the open/closed mode. The idea is that the shutter can be opened and closed at the press of a button so that the user does not have to run serial operation.
 
-The serial communication is designed for programmed opperation. The following commands are available:
+The serial communication is designed for programmed operation. The following commands are available:
 
 sl#: sets lower/closed servo angle where # is an integer from 0 to 180 deg.
 
-su#: sets upper/open servo angle where # is an integer form 0 to 180 deg.
+su#: sets upper/open servo angle where # is an integer from 0 to 180 deg.
 
 m#: sets shutter operation mode where # = 0 is closed, # = 1 is open, and # = 2 is triggered
 
