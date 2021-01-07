@@ -1,11 +1,12 @@
 /* pump shutter for Cuk Lab
   by Ilya Vinogradov 12/30/2020
-
+  Test Comment!
   shutter program for servo shutter operation
   includes serial comm to change/read/flash store servo angles and 
   three states for shutter operation.  Three states are open, 
   closed, and acquire. Last state's shutter operation is via
   external trigger.
+  
 
   To do:
   1) Add trigger code from mode 2 (triggerd shutter operation)
