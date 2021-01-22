@@ -13,20 +13,27 @@
 */
 
 #include <Servo.h>
-#include <Wire.h>
-#define ADDR 0x50 //default EEPROM address when A0-A2 pins wired to ground
+#include <EEPROM.h>
 #define CSUM_CONST 42  //constant for checksum for motor positions stored to EEPROM
+
 
 Servo myservo;  // create servo object to control a servo
 int servoPin = 6; //servo pin
 
+
+//variables needed for flashing LED for trigger mode
+unsigned long previousMillis = 0; //stores length of time since operation
+const long interval = 1000; //defines how long each light blink lasts
+int ledState = LOW;
+
 // Create a structure for servo motor positions. "valid" variable is set to 
 // "true" once structure is filled with actual data for the first time.
-typedef struct {
+typedef struct{
   int closed;
   int opened;
-  unsigned int csum;
-} motor_pos;
+  int csum;
+}motor_pos;
+
 motor_pos readwrite_motor_pos;  //reserve portion of memory for copying flash  memory
 
 int shutterOpened = 60;    // variable to store the upper servo position
@@ -38,19 +45,20 @@ int shutterMode = 0;  //keeps track of button mode. 0 = closed, 1 = open, 2 = tr
 
 char serialBuffer[10];  // serial command buffer of 10 characters
 
+int gatePin = 4; //gate input pin
+
 //run this code initially
-void setup() {
+void setup(){
 
-  pinMode(buttonPin, INPUT_PULLUP); // sets buttonPin to input with pull up (off = HI)
+  pinMode(buttonPin, INPUT_PULLUP); // sets buttonPin to pullup(0V = HIGH). Used to toggle between on and off states when not in trigger mode
+  pinMode(gatePin, INPUT); //gate pin input is used to check whether shutter should be open or closed during trigger mode
+  pinMode(LED_BUILTIN, OUTPUT); //sets up onboard LED as an output, used to determine current state
 
-  //Start I2C for reading/write motor positions to EEPROM
-  Wire.begin();
   delay(10);
   
-  // reads flash memory for motor positions
-  readI2CByte(0, &readwrite_motor_pos, sizeof(readwrite_motor_pos));
-  // if stored data is valid update shutter closed and opened positions
-  if (motorIsDataValid(readwrite_motor_pos)==true) {
+  readEEPROM(readwrite_motor_pos); //reads the data stored on the EEPROM from last operation
+  
+  if (motorIsDataValid(readwrite_motor_pos)==true){ //checks if the positions stored on the EEPROM are valid, then updates the open and closed positions. If invalid, position defaults to values defined above
     shutterOpened = readwrite_motor_pos.opened;
     shutterClosed = readwrite_motor_pos.closed;
   }
@@ -60,34 +68,49 @@ void setup() {
   
   // start serial port at 9600 bps and wait for port to open:
   Serial.begin(9600);
-  //while (!Serial) {  } //removed because if serial connection is not established shutter will not work
   
 }
 
-bool motorIsDataValid(motor_pos pos_to_check) {
+bool motorIsDataValid(motor_pos pos_to_check){
   return (pos_to_check.closed + pos_to_check.opened + CSUM_CONST)==pos_to_check.csum;
 }
 
+void writeEEPROM(motor_pos motorPos){ //updates the EEPROM values with those in 'readwrite_motor_pos' if they are different
+   
+   EEPROM.update(0, readwrite_motor_pos.closed);
+   EEPROM.update(1, readwrite_motor_pos.opened);
+   EEPROM.update(2, readwrite_motor_pos.csum);
+}
+
+void readEEPROM(motor_pos &readwrite_motor_pos){ //updates 'readwrite_motor_pos' to hold the values stored on the EEPROM 
+   
+   readwrite_motor_pos.closed = EEPROM.read(0);
+   readwrite_motor_pos.opened = EEPROM.read(1);
+   readwrite_motor_pos.csum = EEPROM.read(2);
+}
+
+
+
 // Handle serial input and storing into buffer with new line (\n) as read flag
 // Returns whether buffer is ready to be read or not
-bool readSerialBuffer() {
+bool readSerialBuffer(){
   static unsigned int serialIndex = 0;
   char inByte;
   
   // if we get a valid byte, read analog ins:
-  if (Serial.available() > 0) {
+  if (Serial.available() > 0){
     // get incoming byte:
     inByte = Serial.read();
 
     // write the incoming byte to the serial buffer
-    if (serialIndex < (sizeof(serialBuffer)/sizeof(serialBuffer[0])-1)) {
+    if (serialIndex < (sizeof(serialBuffer)/sizeof(serialBuffer[0])-1)){
         serialBuffer[serialIndex] = inByte; // set byte into serialBuffer
-    } else  {
+    } else{
         serialBuffer[serialIndex] = '\n'; // byte value for new line which triggers reading the buffer
     }
 
     // when new line byte is encountered, toggle reading of serial buffer
-    if (serialBuffer[serialIndex] == '\n') {
+    if (serialBuffer[serialIndex] == '\n'){
       Serial.write(serialBuffer,serialIndex+1);
       serialIndex = 0;
       return true;
@@ -100,10 +123,10 @@ bool readSerialBuffer() {
 }
 
 //When ready to read, proc commands from serial buffer
-void interpSerialBuffer() {
-  switch (serialBuffer[0])  {
+void interpSerialBuffer(){
+  switch (serialBuffer[0]){
     case 's':
-      switch (serialBuffer[1])  {
+      switch (serialBuffer[1]){
         case 'l': //set shutter closed servo angle
           getAngle(&serialBuffer[2], &shutterClosed); //extract angle from string and update shutterClosed
           break;
@@ -117,7 +140,7 @@ void interpSerialBuffer() {
   
     //set mode of operation
     case 'm': 
-      switch (serialBuffer[1])  {
+      switch (serialBuffer[1]){
         case '0': //shutter closed
           shutterMode = 0;
           break;
@@ -133,7 +156,7 @@ void interpSerialBuffer() {
       break;
       
     case 'r': //read to serial port current state:
-      switch (serialBuffer[1])  {
+      switch (serialBuffer[1]){
         case 'm': //read mode
           Serial.println(shutterMode); 
           break;
@@ -149,27 +172,35 @@ void interpSerialBuffer() {
       break;
   
     case 'f': // read/write servo angles to flash
-      switch (serialBuffer[1]) {
+      switch (serialBuffer[1]){
         case 'w': //write to flash
           //update values in struct that will be sent to flash
           readwrite_motor_pos.opened = shutterOpened;
           readwrite_motor_pos.closed = shutterClosed;
+          
           //basic checksum to ensure that the opened/closed positions are valid
           readwrite_motor_pos.csum = readwrite_motor_pos.closed + readwrite_motor_pos.opened + CSUM_CONST;
   
           //write struct to flash
-          writeI2CByte(0, &readwrite_motor_pos, sizeof(readwrite_motor_pos));
+          writeEEPROM(readwrite_motor_pos);
           break;
           
         case 'r': //read to flash
           // reads flash memory for motor positions
-          // reads flash memory for motor positions
-          readI2CByte(0, &readwrite_motor_pos, sizeof(readwrite_motor_pos));
+          readEEPROM(readwrite_motor_pos);
+          
           // if stored data is valid update shutter closed and opened positions
-          if (motorIsDataValid(readwrite_motor_pos)==true) {
+          if (motorIsDataValid(readwrite_motor_pos)==true){
             shutterOpened = readwrite_motor_pos.opened;
             shutterClosed = readwrite_motor_pos.closed;
           }
+          break;
+          
+          case 'd': //display values held in EEPROM
+            readEEPROM(readwrite_motor_pos);
+            Serial.println(readwrite_motor_pos.closed);
+            Serial.println(readwrite_motor_pos.opened);
+            Serial.println(readwrite_motor_pos.csum);
           break;
           
         default:
@@ -183,77 +214,34 @@ void interpSerialBuffer() {
 }
 
 // read and check angle from serial string
-int getAngle(char angle_str[], int *angle) {
+int getAngle(char angle_str[], int *angle){
   int angleOK = -1; // -1 is used as a flag that the angle was not valid
   int pos_tmp = 0;
 
   //check that first character is a number between 0 and 9
-  if ((angle_str[0] >= '0') && (angle_str[0] <= '9')) {
+  if ((angle_str[0] >= '0') && (angle_str[0] <= '9')){
+    
     pos_tmp = atoi(angle_str);  //extract number from string
+    
     //check that the number is between 0 and 180 (servo limits)
-    if ((pos_tmp >=0) && (pos_tmp <= 180)) {  
+    if ((pos_tmp >=0) && (pos_tmp <= 180)){  
       *angle = pos_tmp;
       angleOK = pos_tmp;  //remove flag for bad angle
     }
   }
 
   // -1 is used as a flag that the angle was not valid
-  if (angleOK < 0)  {
+  if (angleOK < 0){
     Serial.println("Invalid angle");
   }
   
   return angleOK;
 }
 
-//write by page to EEPROM
-void writeI2CByte(byte data_addr, void* data, int dataSize){
-  //Wire.begin();
-  #define PAGE_SIZE 16
-  int bytesToSend;
-  int addressToSend = 0;
-  char * c = (char *) data;
-  for (; dataSize  > 0 ;) {
-    Wire.beginTransmission(ADDR);
-    Wire.write(data_addr + addressToSend);
-    bytesToSend = min(PAGE_SIZE,dataSize);
-    Wire.write(&c[addressToSend],bytesToSend);
-    dataSize -= bytesToSend;
-    addressToSend += bytesToSend;
-    Wire.endTransmission();
-    delay(10);
-  }
-}
-
-//read by byte from EEPROM
-bool readI2CByte(byte data_addr, void* data, int dataSize){
-  
-  char *c = (char *)data;
-  int bytesOut = 0;
-  int ii = 0;
-  //Wire.begin();
-  Wire.beginTransmission(ADDR);
-  Wire.write(data_addr);
-  Wire.endTransmission();
-  bytesOut = Wire.requestFrom(ADDR, dataSize); //retrieve returned bytes
-  //Serial.println(bytesOut);
-  //Serial.println(dataSize);
-  delay(1);
-  while(Wire.available()){
-    c[ii] = Wire.read();
-    //Serial.print(( int )c[ii]);
-    //Serial.print(" ");
-    ii++;
-    if (ii>dataSize)  return false;
-  }
-  //Serial.println();
-  //Serial.println(ii);
-  if (ii==dataSize) return true;
-  return false;
-}
 
 // remove button bounce artifact by checking button status 4 consecutive times
 // returns button status. -1 is flag for unknown status
-int buttonDebounce()  {
+int buttonDebounce(){
   #define DEBUND_BITS 0b111111  //register length for button off
   static unsigned int b = 0;  // register to keep track of true button state in case button press has ringing
   
@@ -261,22 +249,22 @@ int buttonDebounce()  {
   b = b << 1; //shift button register to left
   b = (b & ~1) | digitalRead(buttonPin); //clear first register and populate with button status
   
-  if ((b & DEBUND_BITS) == DEBUND_BITS) { //if button is HIGH register length times in a row
+  if ((b & DEBUND_BITS) == DEBUND_BITS){ //if button is HIGH register length times in a row
     return 1;  
   }
-  if ((b & DEBUND_BITS) == 0) { //if button is LOW register length times in a row
+  if ((b & DEBUND_BITS) == 0){ //if button is LOW register length times in a row
     return 0;
   }
   return -1;  //happens when register is mixed HIGH and LOW
 }
 
 // switches mode for shutter opperation upon button press and keeps track of old button status
-int buttonPressSwitchState(int _shutterMode)  {
+int buttonPressSwitchState(int _shutterMode){
   static int bOldState = 1;
   int bNewState = buttonDebounce(); //gets rid of button press noise when button is first pressed
-  if (bNewState != -1) {  //when a true HIGH or LOW state is encountered
-    if ((bNewState == 0) && (bOldState == 1)) { //when switching from HIGH to LOW state (upon button press)
-      switch (_shutterMode)  {  //this switches modes only if shutter mode is 0 or 1
+  if (bNewState != -1){  //when a true HIGH or LOW state is encountered
+    if ((bNewState == 0) && (bOldState == 1)){ //when switching from HIGH to LOW state (upon button press)
+      switch (_shutterMode){  //this switches modes only if shutter mode is 0 or 1
         case 0:
           _shutterMode = 1;
           break;
@@ -291,24 +279,46 @@ int buttonPressSwitchState(int _shutterMode)  {
 }
 
 // loops through this code under normal operation
-void loop() {
+void loop(){
+  
+  unsigned long currentMillis = millis(); // millis records time since powering on up to max of 52 days then resets to zero.
+  
   // Second, handle interpretation of serial buffer
-  if (readSerialBuffer() == true) {
+  if (readSerialBuffer() == true){
     interpSerialBuffer(); 
     memset(serialBuffer,0,sizeof(serialBuffer));  //clear buffer
   }
-
+  
   shutterMode = buttonPressSwitchState(shutterMode); //when button is pressed undergo state swich if state is 0 or 1
   
   // Third manage state of Arduino and shutter operation
-  switch (shutterMode)  {
-    case 0:
+  switch (shutterMode){
+    case 0: // first state is closed, sets motor position to closed and turns off onboard LED
       myservo.write(shutterClosed);
+      ledState = LOW;
       break;
-    case 1:
+    case 1: //second state is open, sets motor position to on and turns on onboard LED
       myservo.write(shutterOpened);
+      ledState = HIGH;
       break;
-    //case 2:
-      //***put trigger code here***
+    case 2: //third state is trigger mode, checks for trigger signal to open shutter. If low signal then the shutter is closed. Also turns on blinking LED
+      if(digitalRead(gatePin)==HIGH){
+        myservo.write(shutterOpened);
+      }else{
+        myservo.write(shutterClosed);
+      }
+
+      // Turns LED on and off based on time interval
+      if (currentMillis - previousMillis >= interval){ 
+        previousMillis = currentMillis;
+        if(ledState == HIGH){
+          ledState = LOW;
+        }else if(ledState == LOW){
+          ledState = HIGH;
+        }
+      }
+      
   }
+  
+  digitalWrite(LED_BUILTIN, ledState); //turns LED to correct on or off state
 }
