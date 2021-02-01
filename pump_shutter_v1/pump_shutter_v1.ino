@@ -23,8 +23,10 @@ int servoPin = 6; //servo pin
 
 //variables needed for flashing LED for trigger mode
 unsigned long previousMillis = 0; //stores length of time since operation
-const long interval = 1000; //defines how long each light blink lasts
-int ledState = LOW;
+const long interval = 450; //defines how long to wait for shutter before sending high signal to trigger arduino 
+int gateState = HIGH; //controls onboard led that is used to show high signal for trigger arduino
+int previousCameraState;
+int currentCameraState;
 
 // Create a structure for servo motor positions. "valid" variable is set to 
 // "true" once structure is filled with actual data for the first time.
@@ -45,14 +47,15 @@ int shutterMode = 0;  //keeps track of button mode. 0 = closed, 1 = open, 2 = tr
 
 char serialBuffer[10];  // serial command buffer of 10 characters
 
-int gatePin = 4; //gate input pin
+int cameraPin = 4; //camera busy(high)/ready(low) signal pin
+int gatePin = LED_BUILTIN;
 
 //run this code initially
 void setup(){
 
   pinMode(buttonPin, INPUT_PULLUP); // sets buttonPin to pullup(0V = HIGH). Used to toggle between on and off states when not in trigger mode
-  pinMode(gatePin, INPUT); //gate pin input is used to check whether shutter should be open or closed during trigger mode
-  pinMode(LED_BUILTIN, OUTPUT); //sets up onboard LED as an output, used to determine current state
+  pinMode(cameraPin, INPUT_PULLUP); //camera pin input is used to check whether shutter should be open or closed during trigger mode
+  pinMode(gatePin, OUTPUT); //sets up onboard LED as an output, used to show signal sent to trigger arduino
 
   delay(10);
   
@@ -283,6 +286,7 @@ void loop(){
   
   unsigned long currentMillis = millis(); // millis records time since powering on up to max of 52 days then resets to zero.
   
+  
   // Second, handle interpretation of serial buffer
   if (readSerialBuffer() == true){
     interpSerialBuffer(); 
@@ -291,34 +295,42 @@ void loop(){
   
   shutterMode = buttonPressSwitchState(shutterMode); //when button is pressed undergo state swich if state is 0 or 1
   
+  previousCameraState = currentCameraState;
+  currentCameraState = digitalRead(cameraPin);
+  
+  
   // Third manage state of Arduino and shutter operation
   switch (shutterMode){
     case 0: // first state is closed, sets motor position to closed and turns off onboard LED
       myservo.write(shutterClosed);
-      ledState = LOW;
       break;
     case 1: //second state is open, sets motor position to on and turns on onboard LED
       myservo.write(shutterOpened);
-      ledState = HIGH;
       break;
-    case 2: //third state is trigger mode, checks for trigger signal to open shutter. If low signal then the shutter is closed. Also turns on blinking LED
-      if(digitalRead(gatePin)==HIGH){
+    case 2: //third state is trigger mode, checks for camera signal to open shutter then waits a fixed time and sends high signal to trigger arduino
+      
+      if(digitalRead(cameraPin)==LOW){
         myservo.write(shutterOpened);
+        if(previousCameraState == HIGH){
+          previousMillis = currentMillis;
+        }
+        
+        if (abs(currentMillis - previousMillis) >= interval){ 
+          gateState = LOW;
+        
+        }
+        
+
+        
       }else{
         myservo.write(shutterClosed);
+        gateState = HIGH;
       }
 
       // Turns LED on and off based on time interval
-      if (currentMillis - previousMillis >= interval){ 
-        previousMillis = currentMillis;
-        if(ledState == HIGH){
-          ledState = LOW;
-        }else if(ledState == LOW){
-          ledState = HIGH;
-        }
-      }
+
       
   }
   
-  digitalWrite(LED_BUILTIN, ledState); //turns LED to correct on or off state
+  digitalWrite(gatePin, !gateState); //turns LED to correct on or off state
 }
