@@ -48,7 +48,7 @@ int shutterMode = 0;  //keeps track of button mode. 0 = closed, 1 = open, 2 = tr
 char serialBuffer[10];  // serial command buffer of 10 characters
 
 int cameraPin = 4; //camera busy(high)/ready(low) signal pin
-int gatePin = LED_BUILTIN;
+int gatePin = LED_BUILTIN; // will be connected with trigger arduino instead of LED
 
 //run this code initially
 void setup(){
@@ -78,18 +78,16 @@ bool motorIsDataValid(motor_pos pos_to_check){
   return (pos_to_check.closed + pos_to_check.opened + CSUM_CONST)==pos_to_check.csum;
 }
 
-void writeEEPROM(motor_pos motorPos){ //updates the EEPROM values with those in 'readwrite_motor_pos' if they are different
+void writeEEPROM(motor_pos readwrite_motor_pos){ //updates the EEPROM values with those in 'readwrite_motor_pos' if they are different
    
-   EEPROM.update(0, readwrite_motor_pos.closed);
-   EEPROM.update(1, readwrite_motor_pos.opened);
-   EEPROM.update(2, readwrite_motor_pos.csum);
+   EEPROM.put(0,readwrite_motor_pos);
+
 }
 
 void readEEPROM(motor_pos &readwrite_motor_pos){ //updates 'readwrite_motor_pos' to hold the values stored on the EEPROM 
    
-   readwrite_motor_pos.closed = EEPROM.read(0);
-   readwrite_motor_pos.opened = EEPROM.read(1);
-   readwrite_motor_pos.csum = EEPROM.read(2);
+   EEPROM.get(0,readwrite_motor_pos);
+
 }
 
 
@@ -309,28 +307,23 @@ void loop(){
       break;
     case 2: //third state is trigger mode, checks for camera signal to open shutter then waits a fixed time and sends high signal to trigger arduino
       
-      if(digitalRead(cameraPin)==LOW){
+      if(digitalRead(cameraPin)==LOW){ //when camera is ready it immediately starts opening camera
         myservo.write(shutterOpened);
-        if(previousCameraState == HIGH){
+        
+        if(previousCameraState == HIGH){ //this checks to see if this was the falling edge of camera signal and records the time of the falling edge
           previousMillis = currentMillis;
         }
         
-        if (abs(currentMillis - previousMillis) >= interval){ 
+        if (abs(currentMillis - previousMillis) >= interval){ //if an interval of time has passed since the recorded falling edge, turn gateState to low. After turned to low the loop does nothing
           gateState = LOW;
-        
         }
         
-
-        
       }else{
-        myservo.write(shutterClosed);
+        myservo.write(shutterClosed); //if the camera is not low state, then close shutter and send high signal to trigger indicating busy
         gateState = HIGH;
       }
-
-      // Turns LED on and off based on time interval
-
       
   }
   
-  digitalWrite(gatePin, !gateState); //turns LED to correct on or off state
+  digitalWrite(gatePin, !gateState); //not gate state turns LED to correct on or off state, ! will be removed for normal operation
 }
