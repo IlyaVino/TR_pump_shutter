@@ -18,13 +18,13 @@
 
 
 Servo myservo;  // create servo object to control a servo
-int servoPin = 6; //servo pin
+int servoPin = 4; //servo pin
 
 
 //variables needed for flashing LED for trigger mode
 unsigned long previousMillis = 0; //stores length of time since operation
-const long interval = 450; //defines how long to wait for shutter before sending high signal to trigger arduino 
-int gateState = HIGH; //controls onboard led that is used to show high signal for trigger arduino
+const long interval = 1000; //defines how long to wait for shutter before sending high signal to trigger arduino 
+int gateState = LOW; //controls onboard led that is used to show high signal for trigger arduino
 int previousCameraState;
 int currentCameraState;
 
@@ -42,13 +42,14 @@ int shutterOpened = 60;    // variable to store the upper servo position
 int shutterClosed = 30;   // variable to store the lower servo position
 
 //button is used to switch between shutter open/closed state (mode = 1 or 0)
-int buttonPin = 5;       // digital sensor pin
+int buttonPin = 2;       // digital sensor pin
 int shutterMode = 0;  //keeps track of button mode. 0 = closed, 1 = open, 2 = trigger
 
 char serialBuffer[10];  // serial command buffer of 10 characters
 
-int cameraPin = 4; //camera busy(high)/ready(low) signal pin
-int gatePin = LED_BUILTIN; // will be connected with trigger arduino instead of LED
+int cameraPin = 6; //camera busy(high)/ready(low) signal pin
+int gatePin = 8; // Connected to trigger arduino
+int LEDPin = LED_BUILTIN;
 
 //run this code initially
 void setup(){
@@ -301,9 +302,11 @@ void loop(){
   switch (shutterMode){
     case 0: // first state is closed, sets motor position to closed and turns off onboard LED
       myservo.write(shutterClosed);
+      gateState = HIGH;
       break;
     case 1: //second state is open, sets motor position to on and turns on onboard LED
       myservo.write(shutterOpened);
+      gateState = HIGH;
       break;
     case 2: //third state is trigger mode, checks for camera signal to open shutter then waits a fixed time and sends high signal to trigger arduino
       
@@ -315,15 +318,16 @@ void loop(){
         }
         
         if (abs(currentMillis - previousMillis) >= interval){ //if an interval of time has passed since the recorded falling edge, turn gateState to low. After turned to low the loop does nothing
-          gateState = LOW;
+          gateState = HIGH;
         }
         
       }else{
         myservo.write(shutterClosed); //if the camera is not low state, then close shutter and send high signal to trigger indicating busy
-        gateState = HIGH;
+        gateState = LOW;
       }
       
   }
-  
-  digitalWrite(gatePin, !gateState); //not gate state turns LED to correct on or off state, ! will be removed for normal operation
+
+  digitalWrite(LEDPin, gateState);
+  digitalWrite(gatePin, gateState);
 }
