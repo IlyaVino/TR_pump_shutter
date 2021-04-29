@@ -358,5 +358,5 @@ void loop(){
       
   }
   
-  digitalWrite(gatePin, !gateState); //not gate state turns LED to correct on or off state, ! will be removed for normal operation
+  digitalWrite(gatePin, gateState); //not gate state turns LED to correct on or off state, ! will be removed for normal operation
 }
