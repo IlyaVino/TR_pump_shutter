@@ -23,8 +23,10 @@ int servoPin = 4; //servo pin
 
 //variables needed for flashing LED for trigger mode
 unsigned long previousMillis = 0; //stores length of time since operation
-const long interval = 1000; //defines how long to wait for shutter before sending high signal to trigger arduino 
+
 int gateState = LOW; //controls onboard led that is used to show high signal for trigger arduino
+int interval = 450; //defines how long to wait for shutter before sending high signal to trigger arduino 
+
 int previousCameraState;
 int currentCameraState;
 
@@ -33,13 +35,14 @@ int currentCameraState;
 typedef struct{
   int closed;
   int opened;
+  int wait_interval;
   int csum;
 }motor_pos;
 
 motor_pos readwrite_motor_pos;  //reserve portion of memory for copying flash  memory
 
-int shutterOpened = 60;    // variable to store the upper servo position
-int shutterClosed = 30;   // variable to store the lower servo position
+int shutterOpened = 90;    // variable to store the upper servo position
+int shutterClosed = 120;   // variable to store the lower servo position
 
 //button is used to switch between shutter open/closed state (mode = 1 or 0)
 int buttonPin = 2;       // digital sensor pin
@@ -65,6 +68,7 @@ void setup(){
   if (motorIsDataValid(readwrite_motor_pos)==true){ //checks if the positions stored on the EEPROM are valid, then updates the open and closed positions. If invalid, position defaults to values defined above
     shutterOpened = readwrite_motor_pos.opened;
     shutterClosed = readwrite_motor_pos.closed;
+    interval = readwrite_motor_pos.wait_interval;
   }
 
   myservo.write(shutterClosed); //attach pin takes some time, this avoids switching while writing
@@ -76,7 +80,7 @@ void setup(){
 }
 
 bool motorIsDataValid(motor_pos pos_to_check){
-  return (pos_to_check.closed + pos_to_check.opened + CSUM_CONST)==pos_to_check.csum;
+  return (pos_to_check.closed + pos_to_check.opened + pos_to_check.wait_interval + CSUM_CONST)==pos_to_check.csum;
 }
 
 void writeEEPROM(motor_pos readwrite_motor_pos){ //updates the EEPROM values with those in 'readwrite_motor_pos' if they are different
@@ -135,6 +139,9 @@ void interpSerialBuffer(){
         case 'u': //set shutter open servo angle
           getAngle(&serialBuffer[2], &shutterOpened); //extract angle from string and update shutterOpen
           break;
+        case 'i': //set shutter open servo angle
+          getWaitValue(&serialBuffer[2], &interval); //extract angle from string and update shutterOpen
+          break;
         default:
           Serial.println("Invalid set command");   
       }
@@ -168,6 +175,9 @@ void interpSerialBuffer(){
         case 'u': //read upper angle
           Serial.println(shutterOpened); 
           break;
+        case 'i': //read upper angle
+          Serial.println(interval); 
+          break;
         default:
           Serial.println("Invalid read command");
       }
@@ -179,9 +189,10 @@ void interpSerialBuffer(){
           //update values in struct that will be sent to flash
           readwrite_motor_pos.opened = shutterOpened;
           readwrite_motor_pos.closed = shutterClosed;
+          readwrite_motor_pos.wait_interval = interval;
           
           //basic checksum to ensure that the opened/closed positions are valid
-          readwrite_motor_pos.csum = readwrite_motor_pos.closed + readwrite_motor_pos.opened + CSUM_CONST;
+          readwrite_motor_pos.csum = readwrite_motor_pos.closed + readwrite_motor_pos.opened + readwrite_motor_pos.wait_interval + CSUM_CONST;
   
           //write struct to flash
           writeEEPROM(readwrite_motor_pos);
@@ -240,6 +251,30 @@ int getAngle(char angle_str[], int *angle){
   return angleOK;
 }
 
+// read and check wait interval from serial string
+int getWaitValue(char wait_value_str[], int *wait_value){
+  int wait_valueOK = -1; // -1 is used as a flag that the angle was not valid
+  int wait_value_tmp = 0;
+
+  //check that first character is a number between 0 and 9
+  if ((wait_value_str[0] >= '0') && (wait_value_str[0] <= '9')){
+    
+    wait_value_tmp = atoi(wait_value_str);  //extract number from string
+    
+    //check that the number is between 0 and 180 (servo limits)
+    if ((wait_value_tmp >=0) && (wait_value_tmp <= 5000)){  
+      *wait_value = wait_value_tmp;
+      wait_valueOK = wait_value_tmp;  //remove flag for bad angle
+    }
+  }
+
+  // -1 is used as a flag that the angle was not valid
+  if (wait_valueOK < 0){
+    Serial.println("Invalid angle");
+  }
+  
+  return wait_valueOK;
+}
 
 // remove button bounce artifact by checking button status 4 consecutive times
 // returns button status. -1 is flag for unknown status
