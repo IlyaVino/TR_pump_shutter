@@ -11,7 +11,7 @@
   To do:
   1) Add trigger code from mode 2 (triggerd shutter operation)
 */
-
+//test comment
 #include <Servo.h>
 #include <EEPROM.h>
 #define CSUM_CONST 42  //constant for checksum for motor positions stored to EEPROM
